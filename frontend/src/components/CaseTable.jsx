@@ -107,7 +107,7 @@ export default function CaseTable() {
               <th className="py-3 px-4">Case ID & Company</th>
               <th className="py-3 px-4">
                 <div className="flex items-center gap-1.5">
-                  <span>Name / Designation</span>
+                  <span>Name & Designation</span>
                   <select
                     value={designationFilter}
                     onChange={(e) => setDesignationFilter(e.target.value)}
