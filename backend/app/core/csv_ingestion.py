@@ -170,15 +170,7 @@ def load_cases_from_csv(csv_path: str) -> List[Dict[str, Any]]:
                 continue
 
             extracted = []
-            # Only fetch live XBRL for real NSE archives, skip for dummy/example URLs
-            if xbrl_url and "nsearchives.nseindia.com" in xbrl_url:
-                try:
-                    req = urllib.request.Request(xbrl_url, headers=REQ_HEADERS)
-                    with urllib.request.urlopen(req, timeout=2) as resp:
-                        xml_content = resp.read().decode("utf-8", errors="ignore")
-                        extracted = parse_xbrl_xml(xml_content, symbol, company, xbrl_url)
-                except Exception:
-                    extracted = []
+            # Parse directly from CSV record instantaneously without blocking on external internet calls
 
             # Fallback for dummy URLs (e.g. example.com) or offline datasets
             if not extracted:
