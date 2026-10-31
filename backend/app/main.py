@@ -1,9 +1,8 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 import json
 import os
 
@@ -33,8 +32,8 @@ CASES_FILE = os.path.join(DATA_DIR, "cases.json")
 
 def load_raw_cases() -> List[Dict[str, Any]]:
     cases = []
-    
-    # 1. Load curated benchmark cases if available
+
+    # Load curated benchmark cases
     if os.path.exists(CASES_FILE):
         try:
             with open(CASES_FILE, "r", encoding="utf-8") as f:
@@ -43,32 +42,31 @@ def load_raw_cases() -> List[Dict[str, Any]]:
         except Exception as e:
             print(f"Error reading {CASES_FILE}: {e}")
 
-    # 2. Dynamically ingest all CSV files in data/
+    # Dynamically ingest CSV files
     if os.path.exists(DATA_DIR):
         existing_ids = {c.get("case_id") for c in cases}
+
         for fname in os.listdir(DATA_DIR):
             if fname.lower().endswith(".csv"):
                 csv_path = os.path.join(DATA_DIR, fname)
+
                 try:
                     csv_cases = load_cases_from_csv(csv_path)
+
                     for cc in csv_cases:
                         if cc.get("case_id") not in existing_ids:
                             cases.append(cc)
                             existing_ids.add(cc.get("case_id"))
+
                 except Exception as e:
                     print(f"Error loading {fname}: {e}")
 
     return cases
 
 
-@app.get("/")
-def root():
-    return {
-        "service": "SEBI PIT Engine Surveillance API",
-        "engine_version": ENGINE_VERSION,
-        "status": "online"
-    }
-
+# ============================================================
+# API ROUTES
+# ============================================================
 
 @app.get("/api/cases")
 def get_all_cases():
@@ -77,14 +75,17 @@ def get_all_cases():
     """
     raw_cases = load_raw_cases()
     evaluated = []
+
     for c in raw_cases:
         eval_result = engine.evaluate_case(c)
-        # Merge source metadata for UI rich display
+
         merged = {
             **c,
             "evaluation": eval_result
         }
+
         evaluated.append(merged)
+
     return {
         "total_cases": len(evaluated),
         "cases": evaluated
@@ -94,11 +95,23 @@ def get_all_cases():
 @app.get("/api/cases/{case_id}")
 def get_case_detail(case_id: str):
     raw_cases = load_raw_cases()
-    found = next((c for c in raw_cases if c.get("case_id").lower() == case_id.lower()), None)
+
+    found = next(
+        (
+            c for c in raw_cases
+            if c.get("case_id", "").lower() == case_id.lower()
+        ),
+        None
+    )
+
     if not found:
-        raise HTTPException(status_code=404, detail="Case ID not found")
-    
+        raise HTTPException(
+            status_code=404,
+            detail="Case ID not found"
+        )
+
     evaluation = engine.evaluate_case(found)
+
     return {
         **found,
         "evaluation": evaluation
@@ -108,6 +121,7 @@ def get_case_detail(case_id: str):
 @app.get("/api/analytics")
 def get_analytics():
     raw_cases = load_raw_cases()
+
     total_cases = len(raw_cases)
     total_value = 0.0
     critical_breaches = 0
@@ -116,12 +130,20 @@ def get_analytics():
 
     for c in raw_cases:
         eval_res = engine.evaluate_case(c)
-        total_value += eval_res.get("total_traded_value", 0)
+
+        total_value += eval_res.get(
+            "total_traded_value",
+            0
+        )
+
         status = eval_res.get("status")
+
         if status == "NON_COMPLIANT_CRITICAL":
             critical_breaches += 1
+
         elif status == "NON_COMPLIANT_HIGH":
             high_risk_cases += 1
+
         elif status == "COMPLIANT":
             clean_cases += 1
 
@@ -131,8 +153,14 @@ def get_analytics():
         "critical_violations": critical_breaches,
         "high_risk_violations": high_risk_cases,
         "clean_compliance_cases": clean_cases,
-        "compliance_rate_percent": round((clean_cases / total_cases * 100), 1) if total_cases > 0 else 0,
-        "active_holidays_tracked": len(OFFICIAL_MARKET_HOLIDAYS),
+        "compliance_rate_percent": (
+            round((clean_cases / total_cases * 100), 1)
+            if total_cases > 0
+            else 0
+        ),
+        "active_holidays_tracked": len(
+            OFFICIAL_MARKET_HOLIDAYS
+        ),
         "engine_version": ENGINE_VERSION
     }
 
@@ -140,7 +168,11 @@ def get_analytics():
 @app.get("/api/holidays")
 def get_holidays():
     """Returns official recognized market holidays."""
-    holidays = sorted([d.isoformat() for d in OFFICIAL_MARKET_HOLIDAYS])
+
+    holidays = sorted(
+        [d.isoformat() for d in OFFICIAL_MARKET_HOLIDAYS]
+    )
+
     return {
         "calendar_years": "2022-2026",
         "total_holidays": len(holidays),
@@ -148,3 +180,80 @@ def get_holidays():
         "holidays": holidays
     }
 
+
+# ============================================================
+# FRONTEND
+# ============================================================
+
+FRONTEND_DIST = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "../../frontend/dist"
+    )
+)
+
+
+# Serve React static assets
+if os.path.exists(FRONTEND_DIST):
+
+    ASSETS_DIR = os.path.join(
+        FRONTEND_DIST,
+        "assets"
+    )
+
+    if os.path.exists(ASSETS_DIR):
+        app.mount(
+            "/assets",
+            StaticFiles(directory=ASSETS_DIR),
+            name="assets"
+        )
+
+
+    # React SPA fallback
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+
+        requested_file = os.path.abspath(
+            os.path.join(
+                FRONTEND_DIST,
+                full_path
+            )
+        )
+
+        # Prevent directory traversal
+        if requested_file.startswith(FRONTEND_DIST):
+            if os.path.isfile(requested_file):
+                return FileResponse(requested_file)
+
+        index_file = os.path.join(
+            FRONTEND_DIST,
+            "index.html"
+        )
+
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+
+        return {
+            "error": "Frontend build not found",
+            "message": "Run npm run build before starting the server."
+        }
+
+
+# Root route
+@app.get("/")
+def root():
+    index_file = os.path.join(
+        FRONTEND_DIST,
+        "index.html"
+    )
+
+    # If React frontend exists, serve it
+    if os.path.exists(index_file):
+        return FileResponse(index_file)
+
+    # Otherwise show API status
+    return {
+        "service": "SEBI PIT Engine Surveillance API",
+        "engine_version": ENGINE_VERSION,
+        "status": "online"
+    }
